@@ -1,0 +1,23 @@
+{
+  "YEAR_FABRICATION": null,
+  "SURFACE_SHAPE": null,
+  "FUNCTION": "2D Be lenses (R=50um;A=~400um)",
+  "LENGTH": null,
+  "WIDTH": null,
+  "THICK": null,
+  "LENGTH_OPTICAL": null,
+  "SUBSTRATE": null,
+  "COATING": null,
+  "FACILITY": "ESRF",
+  "INSTRUMENT": null,
+  "POLISHING": null,
+  "ENVIRONMENT": null,
+  "SCAN_DATE": null,
+  "CALC_HEIGHT_RMS": null,
+  "CALC_HEIGHT_RMS_FACTOR": null,
+  "CALC_SLOPE_RMS": null,
+  "CALC_SLOPE_RMS_FACTOR": null,
+  "USER_EXAMPLE": null,
+  "USER_REFERENCE": "From file: Be_R50_lens_02.dat ",
+  "USER_ADDED_BY": "celestre+srio"
+}
