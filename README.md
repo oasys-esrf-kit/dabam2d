@@ -19,6 +19,6 @@ usually X is horizontal and Y vertical with respect to the beam. Z the height. N
 
 *.txt file contains metadata
 
-Data files can be accessed in Oasys (Surface/FEA Reader) using the URL: https://raw.githubusercontent.com/srio/dabam2d/main/data/dabam2d-xxx.h5
+Data files can be accessed in Oasys (Surface/FEA Reader) using the URL: https://raw.githubusercontent.com/oasys-esrf-kit/dabam2d/main/data/dabam2d-xxx.h5
 
 
