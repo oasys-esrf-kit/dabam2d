@@ -182,7 +182,7 @@ if __name__ == '__main__':
     ii = 11
     output_filename = "dabam2d-%03d.h5" % ii
 
-    write_surface_file(z.T, y, x, output_filename, overwrite=True)
+    write_surface_file(z.T, x, y, output_filename, overwrite=True)
 
     print("write_h5_surface: File for OASYS " + output_filename + " written to disk.")
 
