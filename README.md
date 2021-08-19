@@ -15,7 +15,7 @@ Data files are data/dabam2d-xxx.h5 and data/dabam2d-xxx.txt with xxx the index (
     file.close()
 ```
 
-X is usually horizontal and Y the vertical directions if the surface with respect to the beam. Z the height. Note that Z.shape is (Y.size, X.size).
+usually X is horizontal and Y vertical with respect to the beam. Z the height. Note that Z.shape is (Y.size, X.size).
 
 *.txt file contains metadata
 
