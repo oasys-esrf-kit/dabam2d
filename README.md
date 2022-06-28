@@ -21,6 +21,6 @@ usually X is horizontal and Y vertical with respect to the beam. Z the height. N
 
 Data files can be accessed in Oasys (Surface/FEA Reader) using the URL: https://raw.githubusercontent.com/oasys-esrf-kit/dabam2d/main/data/dabam2d-xxx.h5
 
-Data files can be seen using a h5 viewer, e.g. https://h5web.panosc.eu/h5wasm?url=https%3A%2F%2Fraw.githubusercontent.com%2Foasys-esrf-kit%2Fdabam2d%2Fmain%2Fdata%2Fdabam2d-001.h5 
+Data files can be seen using a h5 viewer, e.g. https://h5web.panosc.eu/h5wasm?url=https://raw.githubusercontent.com/oasys-esrf-kit/dabam2d/main/data/dabam2d-001.h5 
 
 
