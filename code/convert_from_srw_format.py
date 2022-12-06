@@ -4,7 +4,7 @@ import numpy as np
 from oasys.util.oasys_util import write_surface_file
 
 
-# def write_surface_file(zz, xx, yy, file_name, overwrite=True):
+# def write_surface_file(zz, xx, yy, file_name, overwrite=True, subgroup_name="surface_file"):
 #
 #     if (os.path.isfile(file_name)) and (overwrite==True): os.remove(file_name)
 #
