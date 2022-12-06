@@ -3,6 +3,49 @@ from srxraylib.plot.gol import plot_image
 import numpy as np
 from oasys.util.oasys_util import write_surface_file
 
+
+# def write_surface_file(zz, xx, yy, file_name, overwrite=True):
+#
+#     if (os.path.isfile(file_name)) and (overwrite==True): os.remove(file_name)
+#
+#     if not os.path.isfile(file_name):  # if file doesn't exist, create it.
+#         file = h5py.File(file_name, 'w')
+#         # points to the default data to be plotted
+#         file.attrs['default']          = subgroup_name
+#         # give the HDF5 root some more attributes
+#         file.attrs['file_name']        = file_name
+#         file.attrs['file_time']        = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+#         file.attrs['creator']          = 'write_surface_file'
+#         file.attrs['code']             = 'Oasys'
+#         file.attrs['HDF5_Version']     = h5py.version.hdf5_version
+#         file.attrs['h5py_version']     = h5py.version.version
+#         file.close()
+#
+#     file = h5py.File(file_name, 'a')
+#
+#     try:
+#         f1 = file.create_group(subgroup_name)
+#     except:
+#         f1 = file[subgroup_name]
+#
+#     f1z = f1.create_dataset("Z", data=zz)
+#     f1x = f1.create_dataset("X", data=xx)
+#     f1y = f1.create_dataset("Y", data=yy)
+#
+#
+#     # NEXUS attributes for automatic plot
+#     f1.attrs['NX_class'] = 'NXdata'
+#     f1.attrs['signal'] = "Z"
+#     f1.attrs['axes'] = [b"Y", b"X"]
+#
+#     f1z.attrs['interpretation'] = 'image'
+#     f1x.attrs['long_name'] = "X [m]"
+#     f1y.attrs['long_name'] = "Y [m]"
+#
+#
+#     file.close()
+
+
 def read_srw_intensity_dat(file_name):
     '''Reader for metrology data to numpy array'''
 
