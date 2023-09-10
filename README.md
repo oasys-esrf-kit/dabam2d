@@ -29,15 +29,15 @@ metadata = {"YEAR_FABRICATION": YEAR_FABRICATION,
             "FUNCTION": FUNCTION,
             "LENS_R_H": LENS_R_H,             # sagittal radius of curvature
             "LENS_R_V": LENS_R_V,             # meridional radius of curvature
-            "LENS_FOCUS": LENS_FOCUS          # 1 for 1D and 2 for 2D
+            "LENS_FOCUS": LENS_FOCUS,         # 1 for 1D and 2 for 2D
             "WIDTH": WIDTH,                   # horizontal geometric aperture (for lenses)
             "LENGTH": LENGTH,                 # vertical geometric aperture (for lenses)
             "THICK": THICK,
             "LENGTH_OPTICAL": LENGTH_OPTICAL,
             "SUBSTRATE": SUBSTRATE,           # lens material (eg. Si, Be, Al, diamond, glassy-c, SU-8...)
             "COATING": COATING,
-            "FACILITY": FACILITY, 
-            "INSTRUMENT": INSTRUMENT,         # beamline, if data from at-wavelength metrology
+            "FACILITY": FACILITY,             # beamline, if data from at-wavelength metrology
+            "INSTRUMENT": INSTRUMENT,         # technique, if data from at-wavelength metrology
             "POLISHING": POLISHING,
             "ENVIRONMENT": ENVIRONMENT,
             "SCAN_DATE": SCAN_DATE,
