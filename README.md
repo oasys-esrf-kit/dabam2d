@@ -24,30 +24,31 @@ usually X is horizontal and Y vertical with respect to the beam. Z the height. N
 The *.txt file contains metadata:
 
 ```commandline
-metadata = {"YEAR_FABRICATION": YEAR_FABRICATION,
-            "SURFACE_SHAPE": SURFACE_SHAPE,
-            "FUNCTION": FUNCTION,
-            "LENS_R_H": LENS_R_H,             # sagittal radius of curvature
-            "LENS_R_V": LENS_R_V,             # meridional radius of curvature
-            "LENS_FOCUS": LENS_FOCUS,         # 1 for 1D and 2 for 2D
-            "WIDTH": WIDTH,                   # horizontal geometric aperture (for lenses)
-            "LENGTH": LENGTH,                 # vertical geometric aperture (for lenses)
-            "THICK": THICK,
-            "LENGTH_OPTICAL": LENGTH_OPTICAL,
-            "SUBSTRATE": SUBSTRATE,           # lens material (eg. Si, Be, Al, diamond, glassy-c, SU-8...)
-            "COATING": COATING,
-            "FACILITY": FACILITY,             # beamline, if data from at-wavelength metrology
-            "INSTRUMENT": INSTRUMENT,         # technique, if data from at-wavelength metrology
-            "POLISHING": POLISHING,
-            "ENVIRONMENT": ENVIRONMENT,
-            "SCAN_DATE": SCAN_DATE,
-            "CALC_HEIGHT_RMS": CALC_HEIGHT_RMS,
-            "CALC_HEIGHT_RMS_FACTOR": CALC_HEIGHT_RMS_FACTOR,
-            "CALC_SLOPE_RMS": CALC_SLOPE_RMS,
-            "CALC_SLOPE_RMS_FACTOR": CALC_SLOPE_RMS_FACTOR,
-            "USER_EXAMPLE": USER_EXAMPLE,
-            "USER_REFERENCE": USER_REFERENCE,
-            "USER_ADDED_BY": USER_ADDED_BY,
+metadata = {
+    "YEAR_FABRICATION": YEAR_FABRICATION,
+    "SURFACE_SHAPE": SURFACE_SHAPE,
+    "FUNCTION": FUNCTION,
+    "RS": RS,                         # sagittal radius of curvature (hor. R if lenses)
+    "RM": RM,                         # meridional/tangential radius of curvature (ver. R if lenses)
+    "FOCUS_DIR": FOCUS_DIR,           # 1 for 1D and 2 for 2D or -1 for nor defined
+    "WIDTH": WIDTH,                   # horizontal geom. aperture if lenses
+    "LENGTH": LENGTH,                 # vertical geom. aperture if lenses
+    "THICK": THICK,
+    "SUBSTRATE": SUBSTRATE,
+    "COATING": COATING,
+    "MATERIAL": MATERIAL,
+    "FACILITY": FACILITY,             # beamline, if data from at-wavelength metrology
+    "INSTRUMENT": INSTRUMENT,         # technique, if data from at-wavelength metrology
+    "POLISHING": POLISHING,
+    "ENVIRONMENT": ENVIRONMENT,
+    "SCAN_DATE": SCAN_DATE,
+    "CALC_HEIGHT_LENGTH_RMS": CALC_HEIGHT_LENGTH_RMS,
+    "CALC_SLOPE__LENGTH_RMS": CALC_SLOPE__LENGTH_RMS,
+    "CALC_HEIGHT_WIDTH_RMS": CALC_HEIGHT_WIDTH_RMS,
+    "CALC_SLOPE_WIDTH_RMS": CALC_SLOPE_WIDTH_RMS,
+    "USER_EXAMPLE": USER_EXAMPLE,
+    "USER_REFERENCE": USER_REFERENCE,
+    "USER_ADDED_BY": USER_ADDED_BY,
 }
 ```
 
@@ -63,4 +64,4 @@ https://h5web.panosc.eu/h5wasm?url=https://raw.githubusercontent.com/oasys-esrf-
 
 ### Contribution:
 
-Contact us to make your profiles available online through DABAM2D - the open-source database of 2D metrology profiles.
+Contact us to make your **metrology** profiles available online through DABAM2D - the open-source database of 2D metrology profiles.
