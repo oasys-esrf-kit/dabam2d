@@ -1,5 +1,6 @@
 # dabam2d - an open-source database of 2D metrology profiles
 
+![alt text](https://github.com/oasys-esrf-kit/dabam2d/blob/main/poster.png)
 
 Repository with files for 2D optical surfaces. They usually contain surface errors or surface shapes. 
 
