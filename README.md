@@ -53,15 +53,13 @@ metadata = {
 }
 ```
 
-Data files can be accessed in Oasys (Surface/FEA Reader) using the URL:
+Data files can be accessed in Oasys (Surface/FEA Reader) using the URL: 
 ```
 https://github.com/oasys-esrf-kit/dabam2d/raw/main/data/dabam2d-xxxx.h5
 ```
 
-Data files can be visualized using a h5 viewer:
-```
-https://h5web.panosc.eu/h5wasm?url=https://raw.githubusercontent.com/oasys-esrf-kit/dabam2d/main/data/dabam2d-XXXX.h5 
-```
+Data files can be visualized using a h5 viewer (e.g. profile 10): https://h5web.panosc.eu/h5wasm?url=https://raw.githubusercontent.com/oasys-esrf-kit/dabam2d/main/data/dabam2d-0010.h5
+
 
 ### Contribution:
 
