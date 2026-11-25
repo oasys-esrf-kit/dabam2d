@@ -1,0 +1,21 @@
+# macOS metadata
+.DS_Store
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local virtual environments
+.venv/
+
+# Package build artifacts
+/build/
+/dist/
+*.egg-info/
+
+# Development of new functionalities
+/context/
+/notes/
+*.ipynb
