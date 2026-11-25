@@ -83,6 +83,8 @@ def read_height_profile(
             y = _real_array(y) * axes_scale
             z = z * height_scale
         x, y, z = _order_surface(x, y, z)
+        y -= np.nanmean(y)
+        x -= np.nanmean(x)
         if np.isinf(z).any():
             raise ValueError("scaled height exceeds the floating-point range")
     except (KeyError, TypeError, ValueError) as error:
