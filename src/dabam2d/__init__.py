@@ -3,6 +3,6 @@
 
 """Tools for two-dimensional X-ray optics metrology."""
 
-from . import io
+from . import io, viz
 
-__all__ = ["io"]
+__all__ = ["io", "viz"]

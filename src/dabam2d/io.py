@@ -99,7 +99,8 @@ def write_height_profile(
     The surface has one-dimensional x and y coordinates in metres and a
     height array z in metres with shape (len(y), len(x)). Descending axes
     are reordered with their corresponding samples. NaN heights are
-    preserved. Existing files raise FileExistsError unless overwrite is true.
+    preserved. Z uses lossless gzip compression with byte shuffling.
+    Existing files raise FileExistsError unless overwrite is true.
     """
     path = Path(path)
     try:
@@ -121,7 +122,7 @@ def write_height_profile(
             group = file.create_group("surface_file")
             group.create_dataset("X", data=x)
             group.create_dataset("Y", data=y)
-            group.create_dataset("Z", data=z)
+            group.create_dataset("Z", data=z, compression="gzip", shuffle=True)
         if overwrite:
             pending.replace(path)
         else:
