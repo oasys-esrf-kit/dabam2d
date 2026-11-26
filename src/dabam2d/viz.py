@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: CECILL-2.1
 # Copyright (c) 2026 ESRF - the European Synchrotron
 
-"""Plot two-dimensional metrology height profiles."""
+"""Plot metrology height maps and line cuts."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from matplotlib.colors import Colormap
     from matplotlib.figure import Figure
 
-__all__ = ["plot_height_profile", "show"]
+__all__ = ["plot_height_profile", "plot_height_cut", "show"]
 
 _AXES_UNITS = {"m": (1.0, "m"), "mm": (1e3, "mm"), "um": (1e6, "µm")}
 _HEIGHT_UNITS = {"um": (1e6, "µm"), "nm": (1e9, "nm"), "A": (1e10, "Å")}
@@ -55,12 +55,7 @@ def plot_height_profile(
     from matplotlib import pyplot as plt
     from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 
-    if axes_unit not in _AXES_UNITS:
-        raise ValueError("axes_unit must be 'm', 'mm', or 'um'")
-    if height_unit not in _HEIGHT_UNITS:
-        raise ValueError("height_unit must be 'um', 'nm', or 'A'")
-    axis_factor, axis_label = _AXES_UNITS[axes_unit]
-    height_factor, height_label = _HEIGHT_UNITS[height_unit]
+    (axis_factor, axis_label), (height_factor, height_label) = _display_units(axes_unit, height_unit)
     _validate_limits(xmin, xmax, "x")
     _validate_limits(ymin, ymax, "y")
     _validate_limits(vmin, vmax, "height")
@@ -103,6 +98,59 @@ def plot_height_profile(
     return fig, ax
 
 
+def plot_height_cut(
+    cut: Mapping[str, np.ndarray | float | str],
+    *,
+    axes_unit: str = "mm",
+    height_unit: str = "nm",
+    xmin: float | None = None,
+    xmax: float | None = None,
+    ymin: float | None = None,
+    ymax: float | None = None,
+    color: str = "#21918c",
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes]:
+    """Plot a cut returned by processing.slice_surface, with values in metres.
+
+    The horizontal limits use axes_unit. The vertical limits use height_unit.
+    The cut direction identifies the plotted and fixed coordinates.
+    Missing heights appear as gaps in the line. Pass an existing ax to embed
+    the plot. Return the figure and axes without showing the figure.
+    """
+    from matplotlib import pyplot as plt
+
+    (axis_factor, axis_label), (height_factor, height_label) = _display_units(axes_unit, height_unit)
+    _validate_limits(xmin, xmax, "position")
+    _validate_limits(ymin, ymax, "height")
+    axis, profile = (_real_array(cut[key]) for key in ("axis", "profile"))
+    if axis.ndim != 1 or axis.size == 0 or profile.shape != axis.shape:
+        raise ValueError("expected a nonempty 1D axis and a profile of the same shape")
+
+    if ax is None:
+        fig, ax = plt.subplots(layout="constrained")
+    else:
+        fig = ax.get_figure()
+
+    position = cut["position"] * axis_factor
+    direction = cut.get("direction")
+    if direction == "h":
+        label, title = "x", f"Horizontal cut at y = {position:g} {axis_label}"
+    elif direction == "v":
+        label, title = "y", f"Vertical cut at x = {position:g} {axis_label}"
+    else:
+        label, title = "Position", f"Cut at {position:g} {axis_label}"
+
+    ax.plot(axis * axis_factor, profile * height_factor, color=color, linewidth=1.5)
+    ax.set(
+        xlabel=f"{label} ({axis_label})",
+        ylabel=f"Height ({height_label})",
+        title=title,
+        xlim=(xmin, xmax),
+        ylim=(ymin, ymax),
+    )
+    return fig, ax
+
+
 def show(*, block: bool | None = None) -> None:
     """Display open Matplotlib figures using the active backend.
 
@@ -111,6 +159,14 @@ def show(*, block: bool | None = None) -> None:
     from matplotlib import pyplot as plt
 
     plt.show(block=block)
+
+
+def _display_units(axes_unit, height_unit):
+    if axes_unit not in _AXES_UNITS:
+        raise ValueError("axes_unit must be 'm', 'mm', or 'um'")
+    if height_unit not in _HEIGHT_UNITS:
+        raise ValueError("height_unit must be 'um', 'nm', or 'A'")
+    return _AXES_UNITS[axes_unit], _HEIGHT_UNITS[height_unit]
 
 
 def _validate_limits(lower, upper, label):

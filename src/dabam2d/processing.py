@@ -16,6 +16,7 @@ __all__ = [
     "transpose_surface",
     "flip_surface",
     "rotate_surface",
+    "slice_surface",
 ]
 
 
@@ -142,6 +143,44 @@ def rotate_surface(
     source_y = -sine * rx[None, :] + cosine * ry[:, None]
     rotated = _sample_bilinear(x - cx, y - cy, z, source_x, source_y, fill_value)
     return {**surface, "x": rx + cx, "y": ry + cy, "z": rotated}
+
+
+def slice_surface(
+    surface: Mapping[str, np.ndarray], direction: str, position: float
+) -> dict[str, np.ndarray | float | str]:
+    """Extract a linearly interpolated height profile at position, in metres.
+
+    Use "h" for a cut parallel to x at the given y, or "v" for a cut
+    parallel to y at the given x. Return the full parallel axis, the
+    corresponding heights, the requested perpendicular position, and direction.
+
+    The position must be inside the inclusive perpendicular axis range.
+    At a measured coordinate the original cut is returned. Between two
+    coordinates, a missing height on either bracketing cut produces NaN.
+    """
+    if direction not in ("h", "v"):
+        raise ValueError("direction must be 'h' or 'v'")
+    position = float(position)
+    x, y, z = _surface_arrays(surface)
+    if direction == "h":
+        axis, perpendicular, cuts = x, y, z
+    else:
+        axis, perpendicular, cuts = y, x, z.T
+
+    if not np.isfinite(position) or not perpendicular[0] <= position <= perpendicular[-1]:
+        raise ValueError(
+            f"position must be within [{perpendicular[0]}, {perpendicular[-1]}] m"
+        )
+
+    upper = np.searchsorted(perpendicular, position)
+    if perpendicular[upper] == position:
+        profile = cuts[upper].copy()
+    else:
+        lower = upper - 1
+        weight = (position - perpendicular[lower]) / (perpendicular[upper] - perpendicular[lower])
+        profile = (1 - weight) * cuts[lower] + weight * cuts[upper]
+
+    return {"axis": axis.copy(), "profile": profile, "position": position, "direction": direction}
 
 
 def _surface_arrays(surface):
