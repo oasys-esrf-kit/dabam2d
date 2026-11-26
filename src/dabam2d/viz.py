@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from matplotlib.colors import Colormap
     from matplotlib.figure import Figure
 
-__all__ = ["plot_height_profile"]
+__all__ = ["plot_height_profile", "show"]
 
 _AXES_UNITS = {"m": (1.0, "m"), "mm": (1e3, "mm"), "um": (1e6, "µm")}
 _HEIGHT_UNITS = {"um": (1e6, "µm"), "nm": (1e9, "nm"), "A": (1e10, "Å")}
@@ -101,6 +101,16 @@ def plot_height_profile(
         ax.add_artist(bar)
 
     return fig, ax
+
+
+def show(*, block: bool | None = None) -> None:
+    """Display open Matplotlib figures using the active backend.
+
+    With block=None, Matplotlib chooses whether to wait for the windows to close.
+    """
+    from matplotlib import pyplot as plt
+
+    plt.show(block=block)
 
 
 def _validate_limits(lower, upper, label):
