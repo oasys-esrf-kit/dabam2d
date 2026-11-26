@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dabam2d"
-version = "2026.11.25"
+version = "2026.11.26"
 description = "Tools for two-dimensional X-ray optics metrology"
 requires-python = ">=3.10"
 dependencies = ["numpy", "h5py", "matplotlib>=3.6"]
