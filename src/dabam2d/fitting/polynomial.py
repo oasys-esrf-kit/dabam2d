@@ -1,0 +1,984 @@
+#!/usr/bin/python
+# coding: utf-8
+
+###################################################################################
+# barc4RefractiveOptics
+# Authors/Contributors: Rafael Celestre, Manuel Sanchez del Rio
+# Rafael.Celestre@esrf.eu
+# creation: 24.06.2019
+# last update: 21.11.2022
+#
+# Check documentation:
+# Celestre, R. et al. (2020). Recent developments in x-ray lenses modelling with SRW.
+# Proc. SPIE 11493, Advances in Computational Methods for X-Ray Optics V, 11493-17.
+# arXiv:2007.15461 [physics.optics] - https://arxiv.org/abs/2007.15461
+#
+# Copyright (c) 2019-2023 European Synchrotron Radiation Facility
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+#############################################################################*/
+
+'''
+This library contains pieces of Python code available on several GitHub repositories from other authors. This library
+fixes bugs, corrects mistakes and brings the parts of those codes to Python 3.x as well as implements new features. 
+The functions from other authors are renamed to provide more uniformity and clarity when using this library.
+
+----------------------------------------------
+Rafael Celestre would like the following people for discussions, debugging and for pointing out relevant literature:
+    > Prof. Virendra Mahajan - University of Arizona, USA
+    > Prof. Herbert Gross - University of Jena, Germany
+    > MSc. Sergio Lordano - Brazilian Light Source (LNLS)
+----------------------------------------------
+
+----------------------------------------------
+ Wavefront fitting
+----------------------------------------------
+
+The five polynomial sets for wavefront fitting are:
+
+a) Zernike circle polynomials:
+ref[1] Virendra N. Mahajan,
+       "Zernike Circle Polynomials and Optical Aberrations of Systems with Circular Pupils,"
+       Appl. Opt. 33, 8121-8124 (1994)
+
+b) Rectangular and square polynomials:
+ref[2] Virendra N. Mahajan and Guang-ming Dai,
+       "Orthonormal polynomials in wavefront analysis: analytical solution,"
+       J. Opt. Soc. Am. A 24, 2994-3016 (2007)
+
+ref[3] Virendra N. Mahajan,
+       "Orthonormal polynomials in wavefront analysis: analytical solution: errata,"
+       J. Opt. Soc. Am. A 29, 1673-1674 (2012)
+
+c) 2D Legendre and Chebyshev polynomials:
+ref[4] Virendra N. Mahajan,
+       "Orthonormal aberration polynomials for anamorphic optical imaging systems with circular pupils,"
+       Appl. Opt. 51, 4087-4091 (2012)
+
+ref[5] Jingfei Ye, Zhishan Gao, Shuai Wang, Jinlong Cheng, Wei Wang, and Wenqing Sun,
+       "Comparative assessment of orthogonal polynomials for wavefront reconstruction over the square aperture,"
+       J. Opt. Soc. Am. A 31, 2304-2311 (2014)
+
+----------------------------------------------
+Python routines:
+----------------------------------------------
+
+===> Zernike circle polynomials
+Imported and adapted from "libtim-py: miscellaneous data manipulation utils"
+(github.com/tvwerkhoven/libtim-py)
+Module: uti_optics.py
+Created by: Tim van Werkhoven (tim@vanwerkhoven.org)
+Converted from Python 2.7 to 3.6 by Manuel Sanchez del Rio - ESRF
+Adapted by: Rafael Celestre - ESRF (31.05.2018)
+
+===> Rectangular aperture Zernike base
+
+Inspired by the module "zernike_rec.py" from "opticspy: python optics mode" (https://github.com/Sterncat/opticspy), 
+created by: Xing Fan (marvin.fanxing@gmail.com) based on the equations from ref[2]. The equations in polar coordinates
+present some inconsistencies for Z10 despite corrections from from ref[3]. 
+Functions written to mimic the ones from 'libtim-py': Rafael Celestre - ESRF (27.02.2020)
+Further corrections pointed out by Sergio Lordano - LNLS (15.11.2022).
+Implemented by Rafael Celestre - ESRF (27.02.2020).
+
+The new module (Rafael Celestre - ESRF - 21.11.2022) uses the decomposition with cartesian coordinates from ref[2]. 
+ 
+===> Square aperture Zernike base
+Functions written to mimic the ones from 'libtim-py': Rafael Celestre - ESRF (15.11.2022)
+
+===> Legendre pol. base
+Functions written to mimic the ones from 'libtim-py': Rafael Celestre - ESRF (29.02.2020)
+
+===> Chebyshev pol. base
+Functions written to mimic the ones from 'libtim-py': Rafael Celestre - ESRF (18.11.2022)
+
+'''
+
+import warnings
+
+import numpy as np
+
+
+def noll_to_zern(j):
+    """
+    Convert linear Noll index to tuple of Zernike indices.
+
+    j is the linear Noll coordinate, n is the radial Zernike index and m is the azimuthal Zernike index.
+
+    @param [in] j Zernike mode Noll index
+    @return (n, m) tuple of Zernike indices
+    @see <https://oeis.org/A176988>.
+    """
+    if (j == 0):
+        raise ValueError("Noll indices start at 1, 0 is invalid.")
+
+    n = 0
+    j1 = j-1
+    while (j1 > n):
+        n += 1
+        j1 -= n
+
+    m = (-1)**j * ((n % 2) + 2 * int((j1+((n+1)%2)) / 2.0 ))
+    return (n, m)
+
+
+
+def calc_zern_circ_basis(nmodes, rad, modestart=1, calc_covmat=False):
+    """
+    Calculate a basis of **nmodes** Zernike modes with radius **rad**.
+
+    ((If **mask** is true, set everything outside of radius **rad** to zero (default). If this is not done, the set of
+    Zernikes will be **rad** by **rad** square and are not orthogonal anymore.)) --> Nothing is masked, do this manually
+    using the 'mask' entry in the returned dict.
+
+    This output of this function can be used as cache for other functions.
+
+    @param [in] nmodes Number of modes to generate
+    @param [in] rad Radius of Zernike modes
+    @param [in] modestart First mode to calculate (Noll index, i.e. 1=piston)
+    @param [in] calc_covmat Return covariance matrix for Zernike modes, and its inverse
+    @return Dict with entries 'modes' a list of Zernike modes, 'modesmat' a matrix of (nmodes, npixels), 'covmat' a
+    covariance matrix for all these modes with 'covmat_in' its inverse, 'mask' is a binary mask to crop only the
+    orthogonal part of the modes.
+    """
+
+    if (nmodes <= 0):
+        return {'modes':[], 'modesmat':[], 'covmat':0, 'covmat_in':0, 'mask':[[0]]}
+    if (rad <= 0):
+        raise ValueError("radius should be > 0")
+    if (modestart <= 0):
+        raise ValueError("**modestart** Noll index should be > 0")
+
+    # Use vectors instead of a grid matrix
+    rvec = ((np.arange(2.0*rad) - rad)/rad)
+    r0 = rvec.reshape(-1,1)
+    r1 = rvec.reshape(1,-1)
+
+    grid_rad = mk_circ_mask(2*rad)
+    grid_ang = np.arctan2(r0, r1)
+
+    grid_mask = grid_rad <= 1
+
+    # Build list of Zernike modes, these are *not* masked/cropped
+    zern_modes = [zernike_circ(zmode, grid_rad, grid_ang) for zmode in range(modestart, nmodes+modestart)]
+
+    # Convert modes to (nmodes, npixels) matrix
+    zern_modes_mat = np.r_[zern_modes].reshape(nmodes, -1)
+
+    covmat = covmat_in = None
+    if (calc_covmat):
+        # Calculate covariance matrix
+        covmat = np.array([[np.sum(zerni * zernj * grid_mask) for zerni in zern_modes] for zernj in zern_modes])
+        # Invert covariance matrix using SVD
+        covmat_in = np.linalg.pinv(covmat)
+
+    # Create and return dict
+    return {'modes': zern_modes, 'modesmat': zern_modes_mat, 'covmat':covmat, 'covmat_in':covmat_in, 'mask': grid_mask}
+
+
+
+def calc_zernike_circ(zern_vec, rad, zern_data={}, mask=True):
+    """
+    Constructs wavefront with Zernike amplitudes **zern_vec**. Given vector **zern_vec** with the amplitude of Zernike
+    modes, return the reconstructed wavefront with radius **rad**. This function uses **zern_data** as cache. If this is
+    not given, it will be generated. See calc_zern_circ_basis() for details. If **mask** is True, set everything outside
+    radius **rad** to zero, this is the default and will use orthogonal Zernikes. If this is False, the modes will not
+    be cropped.
+
+    @param [in] zern_vec 1D vector of Zernike amplitudes
+    @param [in] rad Radius for Zernike modes to construct
+    @param [in] zern_data Zernike basis cache
+    @param [in] mask If True, set everything outside the Zernike aperture to zero, otherwise leave as is.
+    @see See calc_zern_circ_basis() for details on **zern_data** cache and **mask**
+    """
+
+    from functools import reduce
+
+    if (not ('modes' in zern_data.keys()) ):
+        tmp_zern = calc_zern_circ_basis(len(zern_vec), rad)
+        zern_data['modes'] = tmp_zern['modes']
+        zern_data['modesmat'] = tmp_zern['modesmat']
+        zern_data['covmat'] = tmp_zern['covmat']
+        zern_data['covmat_in'] = tmp_zern['covmat_in']
+        zern_data['mask'] = tmp_zern['mask']
+    # Compute Zernike basis if insufficient
+    elif (len(zern_vec) > len(zern_data['modes'])):
+        tmp_zern = calc_zern_circ_basis(len(zern_vec), rad)
+        # This data already exists, overwrite it with new data
+        zern_data['modes'] = tmp_zern['modes']
+        zern_data['modesmat'] = tmp_zern['modesmat']
+        zern_data['covmat'] = tmp_zern['covmat']
+        zern_data['covmat_in'] = tmp_zern['covmat_in']
+        zern_data['mask'] = tmp_zern['mask']
+    zern_basis = zern_data['modes']
+
+    gridmask = 1
+    if (mask):
+        gridmask = zern_data['mask']
+
+    # Reconstruct the wavefront by summing modes
+    return reduce(lambda x,y: x+y[1]*zern_basis[y[0]] * gridmask, enumerate(zern_vec), 0)
+
+
+
+def zernike_circ(j, rho, phi, norm=True):
+    """
+    Calculates Zernike mode with Noll-index j on a square grid of <size>^2
+    elements
+    """
+    n, m = noll_to_zern(j)
+    return zernike_circ_mn(m, n, rho, phi, norm)
+
+
+
+def zernike_circ_mn(m, n, rho, phi, norm=True):
+    """
+    Calculates Zernike mode (m,n) on grid **rho** and **phi**.
+
+    **rho** and **phi** should be radial and azimuthal coordinate grids of identical shape, respectively.
+
+    @param [in] m Radial Zernike index
+    @param [in] n Azimuthal Zernike index
+    @param [in] rho Radial coordinate grid
+    @param [in] phi Azimuthal coordinate grid
+    @param [in] norm Normalize modes to unit variance
+    @return Zernike mode (m,n) with identical shape as rho, phi
+    """
+    nc = 1.0
+    if (norm):
+        nc = (2*(n+1)/(1+(m==0)))**0.5
+    if (m > 0): return nc*zernike_rad(m, n, rho) * np.cos(m * phi)
+    if (m < 0): return nc*zernike_rad(-m, n, rho) * np.sin(-m * phi)
+    return nc*zernike_rad(0, n, rho)
+
+
+
+def zernike_rad(m, n, rho):
+    """
+    Make radial Zernike polynomial on 1D - coordinate grid **rho**.
+
+    @param [in] m Radial Zernike index
+    @param [in] n Azimuthal Zernike index
+    @param [in] rho Radial coordinate grid
+    @return Radial polynomial with identical shape as **rho**
+    """
+
+    from scipy.special import factorial as fac
+
+    if (np.mod(n-m, 2) == 1):
+        return rho*0.0
+
+    wf = rho*0.0
+    for k in range(int((n-m)/2+1)):
+        wf += rho**(n-2.0*k) * (-1.0)**k * fac(n-k) / ( fac(k) * fac( (n+m)/2.0 - k ) * fac( (n-m)/2.0 - k ) )
+
+    return wf
+
+
+
+def zern_normalisation(nmodes=37):
+    """
+    Calculates normalisation vector.
+
+    This function calculates a **nmodes** element vector with normalisation constants for Zernike modes that have not
+    already been normalised.
+
+    @param [in] nmodes Size of normalisation vector.
+    @see <http://research.opt.indiana.edu/Library/VSIA/VSIA-2000_taskforce/TOPS4_2.html> and
+    <http://research.opt.indiana.edu/Library/HVO/Handbook.html>.
+    """
+
+    nolls = (noll_to_zern(j+1) for j in range(nmodes))
+    norms = [(2*(n+1)/(1+(m==0)))**0.5 for n, m in nolls]
+    return np.asanyarray(norms)
+
+
+
+def mk_circ_mask(r0, r1=None, norm=True, center=None, dtype=float, getxy=False):
+    """
+    Make a rectangular matrix of size (r0, r1) where the value of each element is the Euclidean distance to **center**.
+    If **center** is not given, it is the middle of the matrix. If **norm** is True (default), the distance is
+    normalized to half the radius, i.e. values will range from [-1, 1] for both axes. If only r0 is given, the matrix
+    will be (r0, r0). If r1 is also given, the matrix will be (r0, r1). To make a circular binary mask of (r0, r0), use
+    mk_circ_mask(r0) < 1
+
+    @param [in] r0 The width (and height if r1==None) of the mask.
+    @param [in] r1 The height of the mask.
+    @param [in] norm Normalize the distance such that 2/(r0, r1) equals a distance of 1.
+    @param [in] getxy Return x, y-values instead of r
+    @param [in] dtype Datatype to use for radial coordinates
+    @param [in] center Set distance origin to **center** (defaults to the middle of the rectangle)
+    """
+
+    if (not r1):
+        r1 = r0
+    if (r0 < 0 or r1 < 0):
+        warnings.warn("mk_circ_mask(): r0 < 0 or r1 < 0?")
+
+    if (center != None and norm and sum(center)/len(center) > 1):
+        raise ValueError("|center| should be < 1 if norm is set")
+
+    if (center == None):
+        if (norm): center = (0, 0)
+        else: center = (r0/2.0, r1/2.0)
+
+    if (norm):
+        r0v = np.linspace(-1-center[0], 1-center[0], int(r0)).astype(dtype).reshape(-1,1)
+        r1v = np.linspace(-1-center[1], 1-center[1], int(r1)).astype(dtype).reshape(1,-1)
+    else:
+        r0v = np.linspace(0-center[0], r0-center[0], int(r0)).astype(dtype).reshape(-1,1)
+        r1v = np.linspace(0-center[1], r1-center[1], int(r1)).astype(dtype).reshape(1,-1)
+
+    if (getxy):
+        return r0v, r1v
+    else:
+        return (r0v**2. + r1v**2.)**0.5
+
+
+
+def calc_legendre_basis(nmodes, npix, modestart=1, calc_covmat=False):
+    """
+    Calculates a basis of **nmodes** Legendre modes with normalised dimensions [-1, 1].
+
+    This output of this function can be used as cache for other functions.
+
+    @param [in] nmodes Number of modes to generate
+    @param [in] npix array size to calculate the basis
+    @param [in] modestart First mode to calculate (Noll index, i.e. 1=piston)
+    @param [in] calc_covmat Return covariance matrix for Legendre modes, and its inverse
+    @return Dict with entries 'modes' a list of Legendre modes, 'modesmat' a matrix of (nmodes, npixels), 'covmat' a
+    covariance matrix for all these modes with 'covmat_in' its inverse, 'mask' is a binary mask to crop only the
+    orthogonal part of the modes.
+
+    """
+
+    if (nmodes <= 0):
+        return {'modes':[], 'modesmat':[], 'covmat':0, 'covmat_in':0, 'mask':[[0]]}
+    if (len(npix) != 2):
+        raise ValueError("npix sould be [ny, nx]")
+    if (modestart <= 0):
+        raise ValueError("**modestart** Noll index should be > 0")
+    if (modestart > 44):
+        raise ValueError("**modestart** Noll index should be < 45")
+    
+    x_axis = np.linspace(-1, 1, int(npix[1]))
+    y_axis = np.linspace(-1, 1, int(npix[0]))
+    X, Y = np.meshgrid(x_axis, y_axis)
+    grid_mask = X >= -1
+
+    # Build list of Legendre modes, these are *not* masked/cropped
+    zern_modes = [legendre_2D(zmode, X, Y) for zmode in range(modestart, nmodes+modestart)]
+
+    # Convert modes to (nmodes, npixels) matrix
+    zern_modes_mat = np.r_[zern_modes].reshape(nmodes, -1)
+
+    covmat = covmat_in = None
+    if (calc_covmat):
+        # Calculates covariance matrix
+        covmat = np.array([[np.sum(zerni * zernj) for zerni in zern_modes] for zernj in zern_modes])
+        # Invert covariance matrix using SVD
+        covmat_in = np.linalg.pinv(covmat)
+
+    # Create and return dict
+    return {'modes': zern_modes, 'modesmat': zern_modes_mat, 'covmat':covmat, 'covmat_in':covmat_in, 'mask': grid_mask}
+
+
+
+def calc_legendre(leg_vec, npix, leg_data={}, mask=True):
+    """
+    Constructs wavefront with Legendre amplitudes **leg_vec**. Given vector **leg_vec** with the amplitude of Legendre
+    modes, return the reconstructed wavefront with radius **rad**. This function uses **leg_data** as cache. If this is
+    not given, it will be generated. See calc_legendre_basis() for details. If **mask** is True, set everything outside
+    radius **rad** to zero, this is the default and will use orthogonal Legendre. If this is False, the modes will not
+    be cropped.
+
+    @param [in] leg_vec 1D vector of 2D Legendre amplitudes
+    @param [in] npix array size to calculate the basis
+    @param [in] leg_data 2D legendre basis cache
+    @param [in] mask If True, set everything outside the Legendre aperture to zero, otherwise leave as is.
+    @see See calc_legendre_basis() for details on **leg_data** cache and **mask**
+    """
+
+    from functools import reduce
+    zern_data = leg_data
+    zern_vec = leg_vec
+    if (not ('modes' in zern_data.keys()) ):
+        tmp_zern = calc_legendre_basis(len(zern_vec), npix)
+        zern_data['modes'] = tmp_zern['modes']
+        zern_data['modesmat'] = tmp_zern['modesmat']
+        zern_data['covmat'] = tmp_zern['covmat']
+        zern_data['covmat_in'] = tmp_zern['covmat_in']
+        zern_data['mask'] = tmp_zern['mask']
+    # Compute Zernike basis if insufficient
+    elif (len(zern_vec) > len(zern_data['modes'])):
+        tmp_zern = calc_legendre_basis(len(zern_vec), npix)
+        # This data already exists, overwrite it with new data
+        zern_data['modes'] = tmp_zern['modes']
+        zern_data['modesmat'] = tmp_zern['modesmat']
+        zern_data['covmat'] = tmp_zern['covmat']
+        zern_data['covmat_in'] = tmp_zern['covmat_in']
+        zern_data['mask'] = tmp_zern['mask']
+    zern_basis = zern_data['modes']
+
+    gridmask = 1
+    if (mask):
+        gridmask = zern_data['mask']
+
+    # Reconstruct the wavefront by summing modes
+    return reduce(lambda x,y: x+y[1]*zern_basis[y[0]], enumerate(zern_vec), 0)
+
+
+
+def legendre_2D(j, X, Y, norm=True):
+    """
+    Calculates the orthonormal rectangular Legendre mode j on a normalised rectangular grid **X** and **Y** given by:
+
+    x_axis = np.linspace(-1, 1, npix_x)
+    y_axis = np.linspace(-1, 1, npix_y)
+    X, Y = np.meshgrid(x_axis, y_axis)
+
+    @param [in] j indicates the 2D Polynomial order Q_j = L_l(X)*L_m(Y)
+    @param [in] X - horizontal normalised coordinates
+    @param [in] Y - vertical normalised coordinates
+    @return 2D Legendre mode j with identical shape as X and Y
+
+    """
+    if j == 1:      # Piston
+        return np.multiply(legendre_1D(0, X, norm), legendre_1D(0, Y, norm))
+    elif j == 2:    # x-tilt
+        return np.multiply(legendre_1D(1, X, norm), legendre_1D(0, Y, norm))
+    elif j == 3:    # y-tilt
+        return np.multiply(legendre_1D(0, X, norm), legendre_1D(1, Y, norm))
+    elif j == 4:    # x-defocus
+        return np.multiply(legendre_1D(2, X, norm), legendre_1D(0, Y, norm))
+    elif j == 5:
+        return np.multiply(legendre_1D(1, X, norm), legendre_1D(1, Y, norm))
+    elif j == 6:    # y-defocus
+        return np.multiply(legendre_1D(0, X, norm), legendre_1D(2, Y, norm))
+    elif j == 7:    # primary x-coma
+        return np.multiply(legendre_1D(3, X, norm), legendre_1D(0, Y, norm))
+    elif j == 8:
+        return np.multiply(legendre_1D(2, X, norm), legendre_1D(1, Y, norm))
+    elif j == 9:
+        return np.multiply(legendre_1D(1, X, norm), legendre_1D(2, Y, norm))
+    elif j == 10:   # primary y-coma
+        return np.multiply(legendre_1D(0, X, norm), legendre_1D(3, Y, norm))
+    elif j == 11:   # primary x-spherical
+        return np.multiply(legendre_1D(4, X, norm), legendre_1D(0, Y, norm))
+    elif j == 12:
+        return np.multiply(legendre_1D(3, X, norm), legendre_1D(1, Y, norm))
+    elif j == 13:
+        return np.multiply(legendre_1D(2, X, norm), legendre_1D(2, Y, norm))
+    elif j == 14:
+        return np.multiply(legendre_1D(1, X, norm), legendre_1D(3, Y, norm))
+    elif j == 15:   # primary y-spherical
+        return np.multiply(legendre_1D(0, X, norm), legendre_1D(4, Y, norm))
+    elif j == 16:   # secondary x-coma
+        return np.multiply(legendre_1D(5, X, norm), legendre_1D(0, Y, norm))
+    elif j == 17:
+        return np.multiply(legendre_1D(4, X, norm), legendre_1D(1, Y, norm))
+    elif j == 18:
+        return np.multiply(legendre_1D(3, X, norm), legendre_1D(2, Y, norm))
+    elif j == 19:
+        return np.multiply(legendre_1D(2, X, norm), legendre_1D(3, Y, norm))
+    elif j == 20:
+        return np.multiply(legendre_1D(1, X, norm), legendre_1D(4, Y, norm))
+    elif j == 21:   # secondary y-coma
+        return np.multiply(legendre_1D(0, X, norm), legendre_1D(5, Y, norm))
+    elif j == 22:   # secondary x-spherical
+        return np.multiply(legendre_1D(6, X, norm), legendre_1D(0, Y, norm))
+    elif j == 23:
+        return np.multiply(legendre_1D(5, X, norm), legendre_1D(1, Y, norm))
+    elif j == 24:
+        return np.multiply(legendre_1D(4, X, norm), legendre_1D(2, Y, norm))
+    elif j == 25:
+        return np.multiply(legendre_1D(3, X, norm), legendre_1D(3, Y, norm))
+    elif j == 26:
+        return np.multiply(legendre_1D(2, X, norm), legendre_1D(4, Y, norm))
+    elif j == 27:
+        return np.multiply(legendre_1D(1, X, norm), legendre_1D(5, Y, norm))
+    elif j == 28:   # secondary y-spherical
+        return np.multiply(legendre_1D(0, X, norm), legendre_1D(6, Y, norm))
+    elif j == 29:   # tertiary x-coma
+        return np.multiply(legendre_1D(7, X, norm), legendre_1D(0, Y, norm))
+    elif j == 30:
+        return np.multiply(legendre_1D(6, X, norm), legendre_1D(1, Y, norm))
+    elif j == 31:
+        return np.multiply(legendre_1D(5, X, norm), legendre_1D(2, Y, norm))
+    elif j == 32:
+        return np.multiply(legendre_1D(4, X, norm), legendre_1D(3, Y, norm))
+    elif j == 33:
+        return np.multiply(legendre_1D(3, X, norm), legendre_1D(4, Y, norm))
+    elif j == 34:
+        return np.multiply(legendre_1D(2, X, norm), legendre_1D(5, Y, norm))
+    elif j == 35:
+        return np.multiply(legendre_1D(1, X, norm), legendre_1D(6, Y, norm))
+    elif j == 36:   # tertiary y-coma
+        return np.multiply(legendre_1D(0, X, norm), legendre_1D(7, Y, norm))
+    elif j == 37:   # tertiary x-spherical
+        return np.multiply(legendre_1D(8, X, norm), legendre_1D(0, Y, norm))
+    elif j == 37:
+        return np.multiply(legendre_1D(7, X, norm), legendre_1D(1, Y, norm))
+    elif j == 38:
+        return np.multiply(legendre_1D(6, X, norm), legendre_1D(2, Y, norm))
+    elif j == 39:
+        return np.multiply(legendre_1D(5, X, norm), legendre_1D(3, Y, norm))
+    elif j == 40:
+        return np.multiply(legendre_1D(4, X, norm), legendre_1D(4, Y, norm))
+    elif j == 41:
+        return np.multiply(legendre_1D(3, X, norm), legendre_1D(5, Y, norm))
+    elif j == 42:
+        return np.multiply(legendre_1D(2, X, norm), legendre_1D(6, Y, norm))
+    elif j == 43:
+        return np.multiply(legendre_1D(1, X, norm), legendre_1D(7, Y, norm))
+    elif j == 44:   # tertiary y-spherical
+        return np.multiply(legendre_1D(0, X, norm), legendre_1D(8, Y, norm))
+
+
+
+def legendre_1D(Ln, X, norm=True):
+    """
+    Calculates the 1D Legendre polynomials on a X grid ranging from -1 to 1. The polynomials can be obtained using the
+    Rodrigues formula (https://en.wikipedia.org/wiki/Rodrigues%27_formula): Ln = 1/(2^n n!) * d^n(x^2-1)^n/dx^n, where
+    d^n/dx^n indicates the nth derivative of (x^2-1)^n
+
+    @param [in] Ln: polynomial index
+    @param [in] X: grid ranging from [-1,1]. np.linspace(-1,1,npix) or np.meshgrid(-1,1,npix)
+    @param [in] norm: puts the normal in orthonormal, otherwise the base is just orthogonal
+    @return 1D Legendre polynomial calculated over a grid.
+    """
+
+    k = 1
+    if norm is True:
+        k = np.sqrt(2*Ln + 1)
+    if Ln == 0:     # Piston
+        return np.ones(X.shape) * k
+    elif Ln == 1:     # Tilt
+        return X
+    elif Ln == 2:     # Defocus
+        return (3*X**2 -1)/2
+    elif Ln == 3:     # Coma
+        return (5*X**3 - 3*X)/2
+    elif Ln == 4:     # Spherical aberration
+        return (35*X**4 - 30*X**2 + 3)/8
+    elif Ln == 5:     # Secondary coma
+        return (63*X**5 - 70*X**3 + 15*X)/8
+    elif Ln == 6:     # Secondary spherical aberration
+        return (231*X**6 - 315*X**4 + 105*X**2 - 5)/16
+    elif Ln == 7:     # Tertiary coma
+        return (429*X**7 - 693*X**5 + 315*X**3 - 35*X)/16
+    elif Ln == 8:     # Tertiary spherical aberration
+        return (6435*X**8 - 12012*X**6 + 6930*X**4 - 1260*X**2 + 35)/128
+
+
+
+def calc_chebyshev_basis(nmodes, npix, modestart=1, calc_covmat=False):
+    """
+    Calculates a basis of **nmodes** Chebyshev modes with normalised dimensions [-1, 1].
+
+    This output of this function can be used as cache for other functions.
+
+    @param [in] nmodes Number of modes to generate
+    @param [in] npix array size to calculate the basis
+    @param [in] modestart First mode to calculate (Noll index, i.e. 1=piston)
+    @param [in] calc_covmat Return covariance matrix for Chebyshev modes, and its inverse
+    @return Dict with entries 'modes' a list of Chebyshev modes, 'modesmat' a matrix of (nmodes, npixels), 'covmat' a
+    covariance matrix for all these modes with 'covmat_in' its inverse, 'mask' is a binary mask to crop only the
+    orthogonal part of the modes.
+
+    """
+
+    if (nmodes <= 0):
+        return {'modes': [], 'modesmat': [], 'covmat': 0, 'covmat_in': 0, 'mask': [[0]]}
+    if (len(npix) != 2):
+        raise ValueError("npix sould be [ny, nx]")
+    if (modestart <= 0):
+        raise ValueError("**modestart** Noll index should be > 0")
+    if (modestart > 44):
+        raise ValueError("**modestart** Noll index should be < 45")
+
+    x_axis = np.linspace(-1, 1, int(npix[1]))
+    y_axis = np.linspace(-1, 1, int(npix[0]))
+    X, Y = np.meshgrid(x_axis, y_axis)
+    grid_mask = X >= -1
+
+    # Build list of chebyshev modes, these are *not* masked/cropped
+    zern_modes = [chebyshev_2D(zmode, X, Y) for zmode in range(modestart, nmodes + modestart)]
+
+    # Convert modes to (nmodes, npixels) matrix
+    zern_modes_mat = np.r_[zern_modes].reshape(nmodes, -1)
+
+    covmat = covmat_in = None
+    if (calc_covmat):
+        # Calculates covariance matrix
+        covmat = np.array([[np.sum(zerni * zernj) for zerni in zern_modes] for zernj in zern_modes])
+        # Invert covariance matrix using SVD
+        covmat_in = np.linalg.pinv(covmat)
+
+    # Create and return dict
+    return {'modes': zern_modes, 'modesmat': zern_modes_mat, 'covmat': covmat, 'covmat_in': covmat_in,
+            'mask': grid_mask}
+
+
+
+def calc_chebyshev(leg_vec, npix, leg_data={}, mask=True):
+    """
+    Constructs wavefront with Chebyshev amplitudes **leg_vec**. Given vector **leg_vec** with the amplitude of Chebyshev
+    modes, return the reconstructed wavefront with radius **rad**. This function uses **leg_data** as cache. If this is
+    not given, it will be generated. See calc_chebyshev_basis() for details. If **mask** is True, set everything outside
+    radius **rad** to zero, this is the default and will use orthogonal Chebyshev. If this is False, the modes will not
+    be cropped.
+
+    @param [in] leg_vec 1D vector of 2D Chebyshev amplitudes
+    @param [in] npix array size to calculate the basis
+    @param [in] leg_data 2D Chebyshev basis cache
+    @param [in] mask If True, set everything outside the Chebyshev aperture to zero, otherwise leave as is.
+    @see See calc_chebyshev_basis() for details on **leg_data** cache and **mask**
+    """
+
+    from functools import reduce
+    zern_data = leg_data
+    zern_vec = leg_vec
+    if (not ('modes' in zern_data.keys())):
+        tmp_zern = calc_chebyshev_basis(len(zern_vec), npix)
+        zern_data['modes'] = tmp_zern['modes']
+        zern_data['modesmat'] = tmp_zern['modesmat']
+        zern_data['covmat'] = tmp_zern['covmat']
+        zern_data['covmat_in'] = tmp_zern['covmat_in']
+        zern_data['mask'] = tmp_zern['mask']
+    # Compute Zernike basis if insufficient
+    elif (len(zern_vec) > len(zern_data['modes'])):
+        tmp_zern = calc_chebyshev_basis(len(zern_vec), npix)
+        # This data already exists, overwrite it with new data
+        zern_data['modes'] = tmp_zern['modes']
+        zern_data['modesmat'] = tmp_zern['modesmat']
+        zern_data['covmat'] = tmp_zern['covmat']
+        zern_data['covmat_in'] = tmp_zern['covmat_in']
+        zern_data['mask'] = tmp_zern['mask']
+    zern_basis = zern_data['modes']
+
+    gridmask = 1
+    if (mask):
+        gridmask = zern_data['mask']
+
+    # Reconstruct the wavefront by summing modes
+    return reduce(lambda x, y: x + y[1] * zern_basis[y[0]], enumerate(zern_vec), 0)
+
+
+
+def chebyshev_1D(Cn, X):
+    """
+    Calculates the 1D Chebyshev polynomials on a X grid ranging from -1 to 1. The polynomials can be obtained using the
+    recurrence relation:
+    C_{0} = 1
+    C_{1} = x
+    C_{n+1} = 2*x*C_{n}-C_{n-1}
+    @param [in] Cn: polynomial index
+    @param [in] X: grid ranging from [-1,1]. np.linspace(-1,1,npix) or np.meshgrid(-1,1,npix)
+    @return 1D Chebyshev polynomial calculated over a grid.
+    """
+
+    if Cn == 0:     # Piston
+        return np.ones(X.shape)
+    elif Cn == 1:     # Tilt
+        return X
+    elif Cn == 2:     # Defocus
+        return 2*X**2 - 1
+    elif Cn == 3:     # Coma
+        return 4*X**2 - 3*X
+    elif Cn == 4:     # Spherical aberration
+        return 8*X**4 - 8*X**2 + 1
+    elif Cn == 5:     # Secondary coma
+        return 16*X**5 - 20*X**3 + 5*X
+    elif Cn == 6:     # Secondary spherical aberration
+        return 32*X**6 - 48*X**4 + 18*X**2 - 1
+    elif Cn == 7:     # Tertiary coma
+        return 64*X**7 - 112*X**5 + 56*X**3 - 7*X
+    elif Cn == 8:     # Tertiary spherical aberration
+        return 128*X**8 - 256*X**6 + 160*X**4 - 32*X**2+1
+
+
+
+def chebyshev_2D(j, X, Y):
+    """
+    Calculates the orthonormal rectangular Chebyshev mode j on a normalised rectangular grid **X** and **Y** given by:
+
+    x_axis = np.linspace(-1, 1, npix_x)
+    y_axis = np.linspace(-1, 1, npix_y)
+    X, Y = np.meshgrid(x_axis, y_axis)
+
+    @param [in] j indicates the 2D Polynomial order Q_j = C_l(X)*C_m(Y)
+    @param [in] X - horizontal normalised coordinates
+    @param [in] Y - vertical normalised coordinates
+    @return 2D Chebyshev mode j with identical shape as X and Y
+
+    """
+    if j == 1:      # Piston
+        return np.multiply(chebyshev_1D(0, X), chebyshev_1D(0, Y))
+    elif j == 2:    # x-tilt
+        return np.multiply(chebyshev_1D(1, X), chebyshev_1D(0, Y))
+    elif j == 3:    # y-tilt
+        return np.multiply(chebyshev_1D(0, X), chebyshev_1D(1, Y))
+    elif j == 4:    # x-defocus
+        return np.multiply(chebyshev_1D(2, X), chebyshev_1D(0, Y))
+    elif j == 5:
+        return np.multiply(chebyshev_1D(1, X), chebyshev_1D(1, Y))
+    elif j == 6:    # y-defocus
+        return np.multiply(chebyshev_1D(0, X), chebyshev_1D(2, Y))
+    elif j == 7:    # primary x-coma
+        return np.multiply(chebyshev_1D(3, X), chebyshev_1D(0, Y))
+    elif j == 8:
+        return np.multiply(chebyshev_1D(2, X), chebyshev_1D(1, Y))
+    elif j == 9:
+        return np.multiply(chebyshev_1D(1, X), chebyshev_1D(2, Y))
+    elif j == 10:   # primary y-coma
+        return np.multiply(chebyshev_1D(0, X), chebyshev_1D(3, Y))
+    elif j == 11:   # primary x-spherical
+        return np.multiply(chebyshev_1D(4, X), chebyshev_1D(0, Y))
+    elif j == 12:
+        return np.multiply(chebyshev_1D(3, X), chebyshev_1D(1, Y))
+    elif j == 13:
+        return np.multiply(chebyshev_1D(2, X), chebyshev_1D(2, Y))
+    elif j == 14:
+        return np.multiply(chebyshev_1D(1, X), chebyshev_1D(3, Y))
+    elif j == 15:   # primary y-spherical
+        return np.multiply(chebyshev_1D(0, X), chebyshev_1D(4, Y))
+    elif j == 16:   # secondary x-coma
+        return np.multiply(chebyshev_1D(5, X), chebyshev_1D(0, Y))
+    elif j == 17:
+        return np.multiply(chebyshev_1D(4, X), chebyshev_1D(1, Y))
+    elif j == 18:
+        return np.multiply(chebyshev_1D(3, X), chebyshev_1D(2, Y))
+    elif j == 19:
+        return np.multiply(chebyshev_1D(2, X), chebyshev_1D(3, Y))
+    elif j == 20:
+        return np.multiply(chebyshev_1D(1, X), chebyshev_1D(4, Y))
+    elif j == 21:   # secondary y-coma
+        return np.multiply(chebyshev_1D(0, X), chebyshev_1D(5, Y))
+    elif j == 22:   # secondary x-spherical
+        return np.multiply(chebyshev_1D(6, X), chebyshev_1D(0, Y))
+    elif j == 23:
+        return np.multiply(chebyshev_1D(5, X), chebyshev_1D(1, Y))
+    elif j == 24:
+        return np.multiply(chebyshev_1D(4, X), chebyshev_1D(2, Y))
+    elif j == 25:
+        return np.multiply(chebyshev_1D(3, X), chebyshev_1D(3, Y))
+    elif j == 26:
+        return np.multiply(chebyshev_1D(2, X), chebyshev_1D(4, Y))
+    elif j == 27:
+        return np.multiply(chebyshev_1D(1, X), chebyshev_1D(5, Y))
+    elif j == 28:   # secondary y-spherical
+        return np.multiply(chebyshev_1D(0, X), chebyshev_1D(6, Y))
+    elif j == 29:   # tertiary x-coma
+        return np.multiply(chebyshev_1D(7, X), chebyshev_1D(0, Y))
+    elif j == 30:
+        return np.multiply(chebyshev_1D(6, X), chebyshev_1D(1, Y))
+    elif j == 31:
+        return np.multiply(chebyshev_1D(5, X), chebyshev_1D(2, Y))
+    elif j == 32:
+        return np.multiply(chebyshev_1D(4, X), chebyshev_1D(3, Y))
+    elif j == 33:
+        return np.multiply(chebyshev_1D(3, X), chebyshev_1D(4, Y))
+    elif j == 34:
+        return np.multiply(chebyshev_1D(2, X), chebyshev_1D(5, Y))
+    elif j == 35:
+        return np.multiply(chebyshev_1D(1, X), chebyshev_1D(6, Y))
+    elif j == 36:   # tertiary y-coma
+        return np.multiply(chebyshev_1D(0, X), chebyshev_1D(7, Y))
+    elif j == 37:   # tertiary x-spherical
+        return np.multiply(chebyshev_1D(8, X), chebyshev_1D(0, Y))
+    elif j == 37:
+        return np.multiply(chebyshev_1D(7, X), chebyshev_1D(1, Y))
+    elif j == 38:
+        return np.multiply(chebyshev_1D(6, X), chebyshev_1D(2, Y))
+    elif j == 39:
+        return np.multiply(chebyshev_1D(5, X), chebyshev_1D(3, Y))
+    elif j == 40:
+        return np.multiply(chebyshev_1D(4, X), chebyshev_1D(4, Y))
+    elif j == 41:
+        return np.multiply(chebyshev_1D(3, X), chebyshev_1D(5, Y))
+    elif j == 42:
+        return np.multiply(chebyshev_1D(2, X), chebyshev_1D(6, Y))
+    elif j == 43:
+        return np.multiply(chebyshev_1D(1, X), chebyshev_1D(7, Y))
+    elif j == 44:   # tertiary y-spherical
+        return np.multiply(chebyshev_1D(0, X), chebyshev_1D(8, Y))
+
+
+# These helpers are also called by the legacy Legendre and Chebyshev fitters.
+
+
+def calc_zern_rec_basis(nmodes, npix, modestart=1, calc_covmat=False):
+    """
+    Calculates a basis of **nmodes** Zernike modes with normalised dimensions [2*np.sqrt(1-a**2), 2a].
+
+    This output of this function can be used as cache for other functions.
+
+    @param [in] nmodes Number of modes to generate
+    @param [in] npix array size to calculate the basis
+    @param [in] modestart First mode to calculate (Noll index, i.e. 1=piston)
+    @param [in] calc_covmat Return covariance matrix for Zernike modes, and its inverse
+    @return Dict with entries 'modes' a list of Zernike modes, 'modesmat' a matrix of (nmodes, npixels), 'covmat' a
+    covariance matrix for all these modes with 'covmat_in' its inverse, 'mask' is a binary mask to crop only the
+    orthogonal part of the modes.
+    """
+
+    if (nmodes <= 0):
+        return {'modes':[], 'modesmat':[], 'covmat':0, 'covmat_in':0, 'mask':[[0]]}
+    if (len(npix) != 2):
+        raise ValueError("npix sould be [ny, nx]")
+    if (modestart <= 0):
+        raise ValueError("**modestart** Noll index should be > 0")
+    if (modestart > 15):
+        raise ValueError("**modestart** Noll index should be < 15")
+
+    a = npix[1]/2/np.sqrt((npix[0]/2)**2 + (npix[1]/2)**2)
+    x_axis = np.linspace(-a, a, int(npix[1]))
+    y_axis = np.linspace(-np.sqrt(1-a**2), np.sqrt(1-a**2), int(npix[0]))
+    X, Y = np.meshgrid(x_axis, y_axis)
+    grid_rad = np.sqrt(X ** 2 + Y ** 2)
+    grid_ang = np.arctan2(Y, X)
+    grid_mask = grid_rad >= 0
+
+    # Build list of Zernike modes, these are *not* masked/cropped
+    zern_modes = [zernike_rec(zmode, a, grid_rad, grid_ang) for zmode in range(modestart, nmodes+modestart)]
+
+    # Convert modes to (nmodes, npixels) matrix
+    zern_modes_mat = np.r_[zern_modes].reshape(nmodes, -1)
+
+    covmat = covmat_in = None
+    if (calc_covmat):
+        # Calculates covariance matrix
+        covmat = np.array([[np.sum(zerni * zernj) for zerni in zern_modes] for zernj in zern_modes])
+        # Invert covariance matrix using SVD
+        covmat_in = np.linalg.pinv(covmat)
+
+    # Create and return dict
+    return {'modes': zern_modes, 'modesmat': zern_modes_mat, 'covmat':covmat, 'covmat_in':covmat_in, 'mask': grid_mask}
+
+
+
+def calc_zernike_rec(zern_vec, npix, zern_data={}, mask=True):
+    """
+    Constructs wavefront with Zernike amplitudes **zern_vec**. Given vector **zern_vec** with the amplitude of Zernike
+    modes, return the reconstructed wavefront with radius **rad**. This function uses **zern_data** as cache. If this is
+    not given, it will be generated. See calc_zern_circ_basis() for details. If **mask** is True, set everything outside
+    radius **rad** to zero, this is the default and will use orthogonal Zernikes. If this is False, the modes will not
+    be cropped.
+
+    @param [in] zern_vec 1D vector of Zernike amplitudes
+    @param [in] npix array size to calculate the basis
+    @param [in] zern_data Zernike basis cache
+    @param [in] mask If True, set everything outside the Zernike aperture to zero, otherwise leave as is.
+    @see See calc_zern_rec_basis() for details on **zern_data** cache and **mask**
+    """
+
+    from functools import reduce
+
+    if (not ('modes' in zern_data.keys()) ):
+        tmp_zern = calc_zern_rec_basis(len(zern_vec), npix)
+        zern_data['modes'] = tmp_zern['modes']
+        zern_data['modesmat'] = tmp_zern['modesmat']
+        zern_data['covmat'] = tmp_zern['covmat']
+        zern_data['covmat_in'] = tmp_zern['covmat_in']
+        zern_data['mask'] = tmp_zern['mask']
+    # Compute Zernike basis if insufficient
+    elif (len(zern_vec) > len(zern_data['modes'])):
+        tmp_zern = calc_zern_rec_basis(len(zern_vec), npix)
+        # This data already exists, overwrite it with new data
+        zern_data['modes'] = tmp_zern['modes']
+        zern_data['modesmat'] = tmp_zern['modesmat']
+        zern_data['covmat'] = tmp_zern['covmat']
+        zern_data['covmat_in'] = tmp_zern['covmat_in']
+        zern_data['mask'] = tmp_zern['mask']
+    zern_basis = zern_data['modes']
+
+    gridmask = 1
+    if (mask):
+        gridmask = zern_data['mask']
+
+    # Reconstruct the wavefront by summing modes
+    return reduce(lambda x,y: x+y[1]*zern_basis[y[0]], enumerate(zern_vec), 0)
+
+
+
+def zernike_rec(j, a, rho, phi):
+    """
+    Calculates the orthonormal rectangular Zernike mode j on grid **rho** and **phi**.
+
+    **rho** and **phi** should be radial and azimuthal coordinate grids of identical shape, respectively.
+
+    @param [in] j Radial Zernike index
+    @param [in] a unit rectangle inscribed a unit circle. Its corner points lie at a distance of unity from its centre.
+    @param [in] rho Radial coordinate grid
+    @param [in] phi Azimuthal coordinate grid
+    @return Zernike mode j with identical shape as rho, phi
+
+    """
+    # cartesian coordinates from the polar coordinates
+    x = rho*np.cos(phi)
+    y = rho*np.sin(phi)
+
+    # auxiliary constants
+    mu = np.sqrt(9 - 36*a**2 + 103*a**4 - 134*a**6 + 67*a**8)
+    v = np.sqrt(49 - 196*a**2 + 330*a**4 - 268*a**6 + 134*a**8)
+    tau = 1/(128*v*a**4*(1-a**2)**2)
+    eta = 9 - 45*a**2 + 139*a**4 - 237*a**6 + 201*a**8 - 67*a**10
+    chi = 35 - 70*a**2 + 62*a**4
+    if j == 1:
+        return np.ones(rho.shape)
+    elif j == 2:
+        return (np.sqrt(3)/a)*x
+    elif j == 3:
+        return np.sqrt(3/(1-a**2))*y
+    elif j == 4:
+        return (np.sqrt(5)/(2*np.sqrt(1-2*a**2+2*a**4)))*(3*rho**2-1)
+    elif j == 5:
+        return (3/(a*np.sqrt(1-a**2)))*x*y
+    elif j == 6:
+        return (np.sqrt(5)/(2*a**2*(1-a**2)*np.sqrt(1-2*a**2+2*a**4))) * \
+               (3*(1-a**2)**2*x**2-3*a**4*y**2-a**2*(1-3*a**2+2*a**4))
+    elif j == 7:
+        return (np.sqrt(21)/(2*np.sqrt(27-81*a**2+116*a**4-62*a**6)))*(15*rho**2-9+4*a**2)*y
+    elif j == 8:
+        return (np.sqrt(21)/(2*a*np.sqrt(chi)))*(15*rho**2-5-4*a**2)*x
+    elif j == 9:
+        return (np.sqrt(5)*np.sqrt((27-54*a**2+62*a**4)/(1-a**2))/(2*a**2*(27-81*a**2+116*a**4-62*a**6))) * \
+               (27*(1-a**2)**2*x**2-35*a**4*y**2-a**2*(9-39*a**2+30*a**4))*y
+    elif j == 10:
+        return (np.sqrt(5)/(2*a**3*(1-a**2)*np.sqrt(chi))) * \
+               (35*(1-a**2)**2*x**2-27*a**4*y**2-a**2*(21-51*a**2+30*a**4))*x
+    elif j == 11:
+        return (1/(8*mu))*(315*rho**4-30*(7+2*a**2)*x**2-30*(9-2*a**2)*y**2+27+16*a**2-16*a**4)
+    elif j == 12:
+        return (3*mu/(8*a**2*v*eta)) * (35*(1-a**2)**2*(18-36*a**2+67*a**4)*x**4 +
+                    630*(1-2*a**2)*(1-2*a**2+2*a**4)*x**2*y**2 +
+                    -35*a**4*(49-98*a**2+67*a**4)*y**4 +
+                    -30*(1-a**2)*(7-10*a**2-12*a**4+75*a**6-67*a**8)*x**2 +
+                    -30*a**2*(7-77*a**2+189*a**4-193*a**6+67*a**8)*y**2 +
+                    a**2*(1-a**2)*(1-2*a**2)*(70-233*a**2+233*a**4))
+    elif j == 13:
+        return (np.sqrt(21)/(2*a*np.sqrt(1-3*a**2+4*a**4-2*a**6)))*(5*rho**2-3)*x*y
+    elif j == 14:
+        return 16*tau*(735*(1-a**2)**4*x**4 - 540*a**4*(1-a**2)**2*x**2*y**2 + 735*a**8*y**4 +
+                       -90*a**2*(1-a**2)**3*(7-9*a**2)*x**2 + 90*a**6*(1-a**2)*(2-9*a**2)*y**2 +
+                       3*a**4*(1-a**2)**2*(21-62*a**2+62*a**4))
+    elif j == 15:
+        return (np.sqrt(21)/(2*a**3*(1-a**2)*np.sqrt(1-3*a**2+4*a**4-2*a**6))) * \
+               (5*(1-a**2)**2*x**2-5*a**4*y**2-a**2*(3-9*a**2+6*a**4))*x*y
