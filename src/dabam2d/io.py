@@ -5,7 +5,7 @@
 
 from collections.abc import Mapping
 from pathlib import Path
-from struct import unpack_from
+from struct import Struct, unpack_from
 from tempfile import NamedTemporaryFile
 
 import h5py
@@ -35,6 +35,18 @@ _LENGTH_UNITS = {
     "nanoinches": 2.54e-11,
 }
 
+_OPD_BLOCK = Struct("<16sHIH")
+_OPD_MATRIX = Struct("<3H")
+_OPD_HEIGHT_NAMES = (b"raw_data", b"raw data", b"raw", b"opd", b"sample_data")
+_LENGTH_FACTORS = {
+    "kilometer": 1e3, "meter": 1.0, "millimeter": 1e-3,
+    "micrometer": 1e-6, "nanometer": 1e-9, "picometer": 1e-12, "angstrom": 1e-10,
+}
+_OPDX_SCALARS = {
+    0x01: "b", 0x02: "B", 0x03: "h", 0x04: "H", 0x06: "i", 0x07: "I",
+    0x0A: "q", 0x0B: "Q", 0x0C: "f", 0x0D: "d",
+}
+
 
 def read_height_profile(
     path: str | Path, *, axes_scale: float = 1.0, height_scale: float = 1.0
@@ -42,7 +54,8 @@ def read_height_profile(
     """Load a height map with one-dimensional x and y and z indexed as z[y, x].
 
     Supports DABAM2D HDF5, Zygo MetroPro DAT, Zygo Mx DATX, Zygo XYZ
-    Format 1, SRW tabulated 2D surfaces, and comma-separated x,y,z triplets.
+    Format 1, Wyko OPD, Bruker OPDx, SRW tabulated 2D surfaces, and
+    comma-separated x,y,z triplets.
     Headerless triplets use the supplied scales to convert to metres. For
     calibrated formats the reader decodes to metres before applying the scales.
     Known invalid heights are represented by NaN. Axes are returned in ascending
@@ -64,6 +77,10 @@ def read_height_profile(
             x, y, z = _read_metropro(path)
         elif prefix.startswith(b"Zygo XYZ Data File"):
             x, y, z = _read_zygo_xyz(path)
+        elif prefix.startswith(b"\x01\x00Directory"):
+            x, y, z = _read_opd(path)
+        elif prefix.startswith(b"VCA DATA\x01\x00\x00\x55"):
+            x, y, z = _read_opdx(path)
         elif h5py.is_hdf5(path):
             with h5py.File(path, "r") as file:
                 if "surface_file" in file:
@@ -352,3 +369,183 @@ def _read_datx(file):
     else:
         factor = _LENGTH_UNITS[unit]
     return axes[0], axes[1], z * factor
+
+
+def _read_opd(path):
+    data = memoryview(path.read_bytes())
+    if len(data) < 2 + _OPD_BLOCK.size:
+        raise ValueError("truncated OPD directory")
+
+    name, kind, directory_size, _ = _OPD_BLOCK.unpack_from(data, 2)
+    offset = 2 + directory_size
+    if (name.rstrip(b"\0 ") != b"Directory" or kind != 1
+            or directory_size < _OPD_BLOCK.size or directory_size % _OPD_BLOCK.size
+            or offset > len(data)):
+        raise ValueError("invalid OPD directory")
+
+    blocks = {}
+    for position in range(2 + _OPD_BLOCK.size, offset, _OPD_BLOCK.size):
+        name, kind, size, _ = _OPD_BLOCK.unpack_from(data, position)
+        name = name.rstrip(b"\0 ").lower()
+        if not name:
+            continue
+        end = offset + size
+        if end > len(data):
+            raise ValueError(f"truncated OPD block {name!r}")
+        blocks.setdefault(name, (kind, data[offset:end]))
+        offset = end
+
+    matrix = next((blocks[key][1] for key in _OPD_HEIGHT_NAMES
+                   if key in blocks and blocks[key][0] == 3), None)
+    if matrix is None or len(matrix) < _OPD_MATRIX.size:
+        raise ValueError("missing or incomplete OPD height matrix")
+    nx, ny, sample_size = _OPD_MATRIX.unpack_from(matrix)
+    if sample_size not in (2, 4) or not nx or not ny:
+        raise ValueError("unsupported OPD height matrix encoding or dimensions")
+    if len(matrix) != _OPD_MATRIX.size + nx * ny * sample_size:
+        raise ValueError("OPD height matrix size does not match its dimensions")
+
+    pitch = _opd_number(blocks, b"pixel_size") * 1e-3
+    aspect = _opd_number(blocks, b"aspect", default=1.0)
+    wavelength = _opd_number(blocks, b"wavelength") * 1e-9
+    _check_calibration(pitch, aspect, wavelength)
+
+    # OPD stores complete columns consecutively. Float heights are in
+    # waves, while integer counts also require the Mult calibration.
+    if sample_size == 2:
+        multiplier = _opd_number(blocks, b"mult")
+        _check_calibration(multiplier)
+        dtype, sentinel, height_factor = "<i2", 32766, wavelength / multiplier
+    else:
+        dtype, sentinel, height_factor = "<f4", 1e38, wavelength
+    raw = np.frombuffer(matrix, dtype=dtype, offset=_OPD_MATRIX.size).reshape(nx, ny).T
+    z = raw.astype(float) * height_factor
+    z[~np.isfinite(raw) | (raw >= sentinel)] = np.nan
+    return np.arange(nx) * pitch, np.arange(ny) * (pitch * aspect), z
+
+
+def _opd_number(blocks, name, *, default=None):
+    if name not in blocks:
+        if default is not None:
+            return default
+        raise ValueError(f"missing OPD {name.decode()} calibration")
+    kind, data = blocks[name]
+    fmt = {(6, 2): "<h", (7, 2): "<e", (7, 4): "<f", (8, 8): "<d"}.get((kind, len(data)))
+    if fmt is None:
+        raise ValueError(f"invalid OPD {name.decode()} calibration")
+    return unpack_from(fmt, data)[0]
+
+
+class _OpdxRecords:
+    """Consume length-prefixed OPDx records within a bounded buffer."""
+
+    def __init__(self, buffer):
+        self.buffer = buffer
+        self.offset = 0
+
+    def take(self, size):
+        end = self.offset + size
+        if end > len(self.buffer):
+            raise ValueError("truncated OPDx record")
+        result = self.buffer[self.offset:end]
+        self.offset = end
+        return result
+
+    def number(self, fmt):
+        field = Struct("<" + fmt)
+        return field.unpack(self.take(field.size))[0]
+
+    def string(self):
+        return bytes(self.take(self.number("I")))
+
+    def size(self):
+        width = self.number("B")
+        if width not in (1, 2, 4, 8):
+            raise ValueError("unsupported OPDx record length encoding")
+        return int.from_bytes(self.take(width), "little")
+
+    def payload(self):
+        return self.take(self.size())
+
+    def fields(self):
+        fields = {}
+        while self.offset < len(self.buffer):
+            name = self.string()
+            if not name:
+                if self.buffer[self.offset:self.offset + 3] == b"\x7f\xff\xff":
+                    self.take(3)  # End-of-container marker.
+                continue
+            kind = self.number("B")
+            if kind in _OPDX_SCALARS:
+                value = self.number(_OPDX_SCALARS[kind])
+            elif kind in (0x12, 0x13, 0x18, 0x47, 0x7D):
+                value = self.payload()
+            elif kind in (0x00, 0x40, 0x45, 0x0E, 0x7C):
+                self.string()  # Payload type name.
+                if kind == 0x00:
+                    self.number("I")
+                    self.string()  # Library name.
+                value = self.payload()
+            elif kind == 0x42:
+                self.string()
+                self.take(self.number("B"))
+                value = self.string()
+            elif kind == 0x44:
+                value = self.string()
+            elif kind == 0x46:
+                value = self.size()
+            elif kind == 0x7F:
+                continue
+            else:
+                value = self.take(9 if kind == 0x15 else self.number("B"))
+            fields[name] = value
+        return fields
+
+
+def _opdx_length(payload):
+    field = _OpdxRecords(payload)
+    value = field.number("d")
+    unit = field.string().decode().casefold().removesuffix("s")
+    if unit not in _LENGTH_FACTORS:
+        raise ValueError(f"unsupported OPDx length unit {unit!r}")
+    return value * _LENGTH_FACTORS[unit]
+
+
+def _read_opdx(path):
+    buffer = memoryview(path.read_bytes())
+    groups = _OpdxRecords(buffer[12:]).fields()
+    if b"2D_Data" not in groups or b"MetaData" not in groups:
+        raise ValueError("OPDx file does not contain a 2D height map")
+    metadata = _OpdxRecords(groups[b"MetaData"]).fields()
+    maps = _OpdxRecords(groups[b"2D_Data"]).fields()
+    primary = metadata.get(b"PrimaryData2D")
+    if not isinstance(primary, memoryview) or not primary:
+        raise ValueError("missing OPDx primary 2D height map")
+    fields = _OpdxRecords(maps[primary.tobytes()]).fields()
+
+    matrix = _OpdxRecords(fields[b"Matrix"])
+    ny, nx = matrix.number("I"), matrix.number("I")
+    if (not nx or not ny
+            or nx != fields[b"Dimension2Points"] or ny != fields[b"Dimension1Points"]
+            or len(matrix.buffer) - matrix.offset != nx * ny * 4):
+        raise ValueError("OPDx height matrix size does not match its dimensions")
+    raw = np.frombuffer(matrix.take(nx * ny * 4), dtype="<f4").reshape(ny, nx)
+
+    if b"PixelSize" in metadata:
+        dx = dy = _opdx_length(metadata[b"PixelSize"])
+    else:
+        # The extents span the first and last sample centres.
+        dx = _opdx_length(fields[b"Dimension2Extent"]) / max(1, nx - 1)
+        dy = _opdx_length(fields[b"Dimension1Extent"]) / max(1, ny - 1)
+    height_factor = _opdx_length(fields[b"DataScale"])
+    _check_calibration(dx, dy, abs(height_factor))
+    z = raw.astype(float) * height_factor
+    # Match the OPDx invalid-height threshold in the file's calibrated unit.
+    calibrated_scale = unpack_from("<d", fields[b"DataScale"])[0]
+    z[~np.isfinite(raw) | (raw.astype(float) * calibrated_scale >= 1e21)] = np.nan
+    return np.arange(nx) * dx, np.arange(ny) * dy, z
+
+
+def _check_calibration(*values):
+    if not np.isfinite(values).all() or min(values) <= 0:
+        raise ValueError("invalid OPD/OPDx calibration")
